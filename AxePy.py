@@ -7,6 +7,7 @@ import matplotlib.animation as animation
 from collections import deque
 import threading
 import concurrent.futures
+import numpy as np
 
 # List of miner device IP addresses and hostnames
 miner_devices = []
@@ -65,15 +66,35 @@ metrics = {
     'temp': deque(maxlen=20),
     'sharesAccepted': deque(maxlen=20),
     'sharesRejected': deque(maxlen=20),
+    'bestDiff': deque(maxlen=20),
+    'bestSessionDiff': deque(maxlen=20)  # Adding bestSessionDiff metric
 }
 
-fig, axes = plt.subplots(5, 1, figsize=(10, 15))
-plt.subplots_adjust(hspace=0.5)
-ax1, ax2, ax3, ax4, ax5 = axes
+fig, axes = plt.subplots(7, 1, figsize=(10, 21))  # Adjusted to 7 subplots for 7 metrics
+plt.subplots_adjust(hspace=1)  # Increase spacing for better readability
+ax1, ax2, ax3, ax4, ax5, ax6, ax7 = axes  # Including ax7 for bestSessionDiff
+
+# Define a function to parse difficulty values with suffixes
+def parse_difficulty(value):
+    if value.endswith('M'):
+        return float(value[:-1]) * 1e6
+    elif value.endswith('G'):
+        return float(value[:-1]) * 1e9
+    elif value.endswith('K'):
+        return float(value[:-1]) * 1e3
+    else:
+        return float(value)  # No suffix, direct conversion
+
+fig, axes = plt.subplots(6, 1, figsize=(10, 18))  # Adjust for an extra subplot
+plt.subplots_adjust(hspace=1)  # Increase spacing for better readability
+ax1, ax2, ax3, ax4, ax5, ax6 = axes  # ax6 will be used for bestDiff
 current_ip = None
 selected_metrics = []
 
+window_size = 5
+
 def animate(i):
+    global window_size
     if current_ip:
         miner_data = fetch_miner_data(current_ip)
         if 'error' not in miner_data:
@@ -108,13 +129,44 @@ def animate(i):
                 ax4.set_title('Temperature Over Time')
 
             if 'shares' in selected_metrics:
-                metrics['sharesAccepted'].append(miner_data['sharesAccepted'])
-                metrics['sharesRejected'].append(miner_data['sharesRejected'])
-                ax5.clear()
-                ax5.plot(metrics['sharesAccepted'], label='Shares Accepted')
-                ax5.plot(metrics['sharesRejected'], label='Shares Rejected')
+                metrics['sharesAccepted'].append(miner_data.get('sharesAccepted', 0))
+                metrics['sharesRejected'].append(miner_data.get('sharesRejected', 0))
+
+                if len(metrics['sharesAccepted']) >= window_size and len(metrics['sharesRejected']) >= window_size:
+                    moving_avg_accepted = np.convolve(metrics['sharesAccepted'], np.ones(window_size)/window_size, mode='valid')
+                    moving_avg_rejected = np.convolve(metrics['sharesRejected'], np.ones(window_size)/window_size, mode='valid')
+
+                    x_accepted = range(window_size - 1, len(metrics['sharesAccepted']))
+                    x_rejected = range(window_size - 1, len(metrics['sharesRejected']))
+
+                    ax5.clear()
+                    ax5.fill_between(x_accepted, list(metrics['sharesAccepted'])[window_size-1:], step='pre', alpha=0.6, label='Shares Accepted')
+                    ax5.fill_between(x_rejected, list(metrics['sharesRejected'])[window_size-1:], step='pre', alpha=0.6, label='Shares Rejected', color='r')
+                    ax5.plot(x_accepted, moving_avg_accepted, label='Moving Avg Accepted', color='blue', linestyle='--')
+                    ax5.plot(x_rejected, moving_avg_rejected, label='Moving Avg Rejected', color='red', linestyle='--')
+
                 ax5.legend(loc='upper left')
                 ax5.set_title('Shares Over Time')
+
+            # Update for bestDiff
+            if 'bestDiff' in miner_data:
+                best_diff_value = parse_difficulty(miner_data['bestDiff'])
+                metrics['bestDiff'].append(best_diff_value)
+                ax6.clear()
+                ax6.plot(range(len(metrics['bestDiff'])), metrics['bestDiff'], label='Best Share Difficulty', marker='o', linestyle='-')
+                ax6.set_title('Best Share Difficulty Over Time')
+                ax6.legend(loc='upper left')
+                ax6.set_ylabel('Difficulty')
+
+            # Update for bestSessionDiff
+            if 'bestSessionDiff' in miner_data:
+                best_session_diff_value = parse_difficulty(miner_data['bestSessionDiff'])
+                metrics['bestSessionDiff'].append(best_session_diff_value)
+                ax7.clear()
+                ax7.plot(range(len(metrics['bestSessionDiff'])), metrics['bestSessionDiff'], label='Best Session Share Difficulty', marker='o', linestyle='-')
+                ax7.set_title('Best Session Share Difficulty Over Time')
+                ax7.legend(loc='upper left')
+                ax7.set_ylabel('Difficulty')
 
 class MinerMonitor(Cmd):
     prompt = 'miner-monitor> '
